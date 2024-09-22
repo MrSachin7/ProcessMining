@@ -14,6 +14,13 @@ class PetriNet():
     def add_transition(self, name, id):
         self.transitions[id] = {"name": name, 'input': [], 'output': []}
         
+    def transition_name_to_id(self, name):
+        for id, transition in self.transitions.items():
+            if transition['name'] == name:
+                return id
+        return None 
+
+        
     def add_edge(self, source, target):
         if source in self.places and target in self.transitions:
             self.transitions[target]['input'].append(source)
@@ -112,24 +119,58 @@ def alpha(event_logs):
     
     # Step4
     
-    # Step4.1 : Lets first find the 
+    # 4.1 Find the dependency graph
+    d_graph = dependency_graph(event_logs)
     
-def dependency_graph(event_log):
-    df = {}
-    for case_id, events_arr in event_log.items():
-        for i in range(len(events_arr)-1):
-            event = events_arr[i]
-            next_event = events_arr[i+1]
-            task = event[transition_name]
-            next_task = next_event[transition_name]
+    # 4.2 Find the casual relations
+    casual_relations = get_causal_relations(d_graph)
+    
+    # 4.3 Find the parallel relations
+    parallel_relations = get_parallel_relations(d_graph)
+    
+    # Step4: Final step: All places in casual relations and not in parallel relations
+    step4_relations =casual_not_parallel(casual_relations, parallel_relations)
+    
+    # Step 5 is ignored for now....
+    
+    # Step 7 , lets generate the Petri Net
+    p.add_place('Start')
+    p.add_marking('Start') # Add a token to the start place
+    p.add_place('End')
+    
+    
+    
+    # Push the start and end transitions
+    for transition in first_occuring_transitions:
+        p.add_transition(transition, transition)
+        p.add_edge('Start', transition)
+        
+    for transition in last_occuring_transitions:
+        p.add_transition(transition, transition)
+        p.add_edge(transition, 'End')
+    
+    for relation in step4_relations:
+        transition0 = relation[0]
+        transition1 = relation[1]
+    
+        
+        place = generate_place(transition0, transition1)       
+        
+        p.add_place(place)
+        
+        if transition0 not in first_occuring_transitions:
+            p.add_transition(transition0, transition0)
             
-            if task not in df:
-                df[task] = {}
-            if next_task not in df[task]:
-                df[task][next_task] = 1
-            else:
-                df[task][next_task] = df[task][next_task] + 1
-    return df
+        if transition1 not in last_occuring_transitions:
+            p.add_transition(transition1, transition1)
+        
+        p.add_edge(transition0, place)
+        p.add_edge(place, transition1)  
+    
+    return p
+    
+    
+
     
     
 # Step: 1
@@ -157,15 +198,62 @@ def generate_last_occuring_transitions(event_logs):
     
     return last_occuring_transitions
 
+ # Step4.1 : Lets first find the 
+def dependency_graph(event_log):
+    df = {}
+    for case_id, events_arr in event_log.items():
+        for i in range(len(events_arr)-1):
+            event = events_arr[i]
+            next_event = events_arr[i+1]
+            task = event[transition_name]
+            next_task = next_event[transition_name]
+            
+            if task not in df:
+                df[task] = {}
+            if next_task not in df[task]:
+                df[task][next_task] = 1
+            else:
+                df[task][next_task] = df[task][next_task] + 1
+    return df
+
+# Step4.2 Get casual relations i.e A -> B  and not B -> A
+def get_causal_relations(dependency_graph):
+    casual_relations = set()
+    for step, transitions in dependency_graph.items():
+        for transition in transitions:
+            if (transition, step) in casual_relations:
+                casual_relations.remove((transition, step))
+            else:
+                casual_relations.add((step, transition))
+            
+        # TODO : Remember the (A, (B, C)) scenario  
+    return casual_relations
+
+# Step4.3 Get parallel relations i.e A -> B  and B -> A
+def get_parallel_relations(dependency_graph):
+    parallel_relations = set()
+    temp = set()
+    for step, transitions in dependency_graph.items():
+        for transition in transitions:
+            if (transition, step) in temp:
+                parallel_relations.add((step, transition))
+            else:
+                temp.add((step, transition))
+    return parallel_relations
+
+# Step 4: Final step casual relations and not in parallel relations
+
+def casual_not_parallel(casual_relations, parallel_relations):
+    return casual_relations - parallel_relations
 
 
-# Step4.1 : Find appropriate relations between the transitions
-def generate_relations(d_graph):
-    casual, parallel, choice, loop = set(), set(), set(), set()
+def generate_place(t1, t2):
+    return t1 + '->' + t2
     
 
 logs = read_from_file('extension-log-3.xes')
 d_graph =dependency_graph(logs)
+mined_model = alpha(logs)
 print("\n")
 print ("Step 1: Unique tasks :" , generate_unique_set(logs))
 print("\n")
@@ -174,6 +262,38 @@ print("\n")
 print ("Step 3: Last occuring transitions :" , generate_last_occuring_transitions(logs))
 print("\n")
 
-print ("Step 4: Dependency Graph :" , dependency_graph(logs))
+print ("Step 4.1: Dependency Graph :" , dependency_graph(logs))
+print("\n")
+
+print ("Step 4.2: Casual Relations :" , get_causal_relations(d_graph))
 #
+
+print("\n")
+print ("Step 4.3: Parallel Relations :" , get_parallel_relations(d_graph))
+
+
+
+print("\n")
+print("\n")
+print("\n")
+print("\n")
+print("\n")
+print("\n")
+print("Alpha", mined_model.places)
+
+
+def check_enabled(pn):
+    ts = ["record issue", "inspection", "intervention authorization", "action not required", "work mandate", "no concession", "work completion", "issue completion"]
+    for t in ts:
+        print (pn.is_enabled(pn.transition_name_to_id(t)))
+    print("")
+    
+trace = ["record issue", "inspection", "intervention authorization", "work mandate", "work completion", "issue completion"]
+for a in trace:
+    check_enabled(mined_model)
+    mined_model.fire_transition(mined_model.transition_name_to_id(a))
+
+    
+    
+    
 
