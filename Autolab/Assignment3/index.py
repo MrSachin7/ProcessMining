@@ -1,7 +1,6 @@
 import xml.etree.ElementTree as ET
 from datetime import datetime, date
-import json
-
+from collections import defaultdict
 
 class PetriNet():
     def __init__(self):
@@ -9,10 +8,12 @@ class PetriNet():
         self.transitions = {} # transition_id -> {name, input, output}
         
     def add_place(self, place):
-        self.places[place] = 0
+        if not place in self.places:
+            self.places[place] = 0
     
     def add_transition(self, name, id):
-        self.transitions[id] = {"name": name, 'input': [], 'output': []}
+        if not id in self.transitions:
+            self.transitions[id] = {"name": name, 'input': [], 'output': []}
         
     def transition_name_to_id(self, name):
         for id, transition in self.transitions.items():
@@ -23,9 +24,11 @@ class PetriNet():
         
     def add_edge(self, source, target):
         if source in self.places and target in self.transitions:
-            self.transitions[target]['input'].append(source)
+            if self.transitions[target]['input'] is None or source not in self.transitions[target]['input']:
+             self.transitions[target]['input'].append(source)
         elif source in self.transitions and target in self.places:
-            self.transitions[source]['output'].append(target)
+            if self.transitions[source]['output'] is None or target not in self.transitions[source]['output']:
+             self.transitions[source]['output'].append(target)
         return self
         
     def get_tokens(self, place):
@@ -50,7 +53,13 @@ class PetriNet():
             self.places[place] -= 1
         for place in self.transitions[transition]['output']:
             self.places[place] += 1 
-
+            
+    def to_dict(self):
+        """Convert the object into a dictionary for serialization"""
+        return {
+            "places": self.places,
+            "transitions": self.transitions
+        }
 
 
 def read_from_file(filename):
@@ -119,59 +128,82 @@ def alpha(event_logs):
     
     # Step4
     
-    # 4.1 Find the dependency graph
+    #  Find the dependency graph
     d_graph = dependency_graph(event_logs)
     
-    # 4.2 Find the casual relations
-    casual_relations = get_causal_relations(d_graph)
-    
-    # 4.3 Find the parallel relations
-    parallel_relations = get_parallel_relations(d_graph)
-    
-    # Step4: Final step: All places in casual relations and not in parallel relations
-    step4_relations =casual_not_parallel(casual_relations, parallel_relations)
-    
-    # Step 5 is ignored for now....
-    
-    # Step 7 , lets generate the Petri Net
-    p.add_place('Start')
-    p.add_marking('Start') # Add a token to the start place
-    p.add_place('End')
+    # Find the relation matrix
+    r_matrix = relation_matrix(d_graph)
     
     
+    # Step4 and step5: Final step: All places in casual relations and not in parallel relations
+    casusal_relations = get_casual_pairs(r_matrix)
     
-    # Push the start and end transitions
-    for transition in first_occuring_transitions:
-        p.add_transition(transition, transition)
-        p.add_edge('Start', transition)
-        
-    for transition in last_occuring_transitions:
-        p.add_transition(transition, transition)
-        p.add_edge(transition, 'End')
+    # Add input and output places to the petri net
+    p.add_place('start')
+    # Init start with 1 token
+    p.add_marking('start')
+    p.add_place('end')
     
-    for relation in step4_relations:
-        transition0 = relation[0]
-        transition1 = relation[1]
     
-        
-        place = generate_place(transition0, transition1)       
-        
-        p.add_place(place)
-        
-        if transition0 not in first_occuring_transitions:
-            p.add_transition(transition0, transition0)
+    for item in first_occuring_transitions:
+        p.add_transition(item, item)
+        p.add_edge('start', item)
+    
+    for item in last_occuring_transitions:
+        p.add_transition(item, item)
+        p.add_edge(item, 'end')
+    
+    for item1, item2 in casusal_relations:
+        # None are tuple
+        if not isinstance(item1, tuple) and not isinstance(item2, tuple):
+            place = place_name(item1, item2)
+            p.add_place(place)
+            p.add_transition(item1, item1)
+            p.add_edge(source=item1, target=place)
             
-        if transition1 not in last_occuring_transitions:
-            p.add_transition(transition1, transition1)
+            p.add_transition(item2, item2)
+            p.add_edge(source=place, target=item2)
         
-        p.add_edge(transition0, place)
-        p.add_edge(place, transition1)  
-    
-    return p
-    
-    
+        # Both are tuple
+        elif isinstance(item1, tuple) and isinstance(item2, tuple):
+            place = place_name(item1, item2)
+            p.add_place(place)
+            for i in item1:
+                p.add_transition(i, i)
+                p.add_edge(source=i, target=place)
+            for i in item2:
+                p.add_transition(i, i)
+                p.add_edge(source=place, target=i)      
+                
+        elif isinstance(item1, tuple):
+            place = place_name(item1, item2)
+            p.add_place(place)
+            for i in item1:
+                p.add_transition(i, i)
+                p.add_edge(source=i, target=place)
+            p.add_transition(item2, item2)
+            p.add_edge(source=place, target=item2)      
+        
+        elif isinstance(item2, tuple):
+            place = place_name(item1, item2)
+            p.add_place(place)
+            
+            p.add_transition(item1, item1)
+            p.add_edge(source=item1, target=place)
+            
+            for i in item2:
+                p.add_transition(i, i)
+                p.add_edge(source=place, target=i)
 
-    
+        
+        
+
+    return p
+
+
+def place_name(t0, t1):
+    return f"{t0} -> {t1}"    
+        
     
 # Step: 1
 def generate_unique_set(event_logs):
@@ -198,10 +230,10 @@ def generate_last_occuring_transitions(event_logs):
     
     return last_occuring_transitions
 
- # Step4.1 : Lets first find the 
+ # Step4.1 : Lets first find the dependency graph
 def dependency_graph(event_log):
     df = {}
-    for case_id, events_arr in event_log.items():
+    for _, events_arr in event_log.items():
         for i in range(len(events_arr)-1):
             event = events_arr[i]
             next_event = events_arr[i+1]
@@ -216,84 +248,144 @@ def dependency_graph(event_log):
                 df[task][next_task] = df[task][next_task] + 1
     return df
 
-# Step4.2 Get casual relations i.e A -> B  and not B -> A
-def get_causal_relations(dependency_graph):
-    casual_relations = set()
+
+def relation_matrix(dependency_graph):
+    all_direct_relations = set()
+    
+    # Collect all direct relations from the dependency graph
     for step, transitions in dependency_graph.items():
         for transition in transitions:
-            if (transition, step) in casual_relations:
-                casual_relations.remove((transition, step))
-            else:
-                casual_relations.add((step, transition))
+            all_direct_relations.add((step, transition))
+    
+    # Initialize the matrix with all relations being 'choice'
+    matrix = {}
+    for t1, t2 in all_direct_relations:
+        # Initialize dictionaries if they do not exist
+        if t1 not in matrix:
+            matrix[t1] = {}
+        if t2 not in matrix:
+            matrix[t2] = {}
+    
+        for t1_, t2_ in all_direct_relations:
+            # Init with choice
+            matrix[t1][t1_] = matrix[t1][t2_] = matrix[t2][t1_] = matrix[t2][t2_] = 'choice'
+    
+    # Set 'direct', 'reverse', and 'parallel' relations based on conditions
+    for t1, t2 in all_direct_relations:
+        if matrix[t2][t1] == 'direct':
+            matrix[t1][t2] = matrix[t2][t1] = 'parallel'
+        else:
+            matrix[t1][t2] = 'direct'
+            matrix[t2][t1] = 'reverse'
+    
+    return matrix
+
+
+
+# Step 4: Find pairs that are in direct relation and not in parallel to itself:
+def get_casual_pairs(relation_matrix):
+    result = []
+    
+    for B in relation_matrix:
+        # Collect potential "C" and "D" for simplification
+        for C in relation_matrix[B]:
+            # Check if B has a direct relation to C, and both B and C have "choice" self-relations
+            if (relation_matrix[B][C] == 'direct' and
+                relation_matrix[B][B] == 'choice' and
+                relation_matrix[C][C] == 'choice'):
+                result.append((B, C))
+         
+    possible_multiple_pairs = []
+    
+    for item1, item2 in result:
+        for item1_, item2_ in result:
+            # Skip when the same pair is compared
+            if item1 == item1_ and item2 == item2_:
+                continue
             
-        # TODO : Remember the (A, (B, C)) scenario  
-    return casual_relations
-
-# Step4.3 Get parallel relations i.e A -> B  and B -> A
-def get_parallel_relations(dependency_graph):
-    parallel_relations = set()
-    temp = set()
-    for step, transitions in dependency_graph.items():
-        for transition in transitions:
-            if (transition, step) in temp:
-                parallel_relations.add((step, transition))
-            else:
-                temp.add((step, transition))
-    return parallel_relations
-
-# Step 4: Final step casual relations and not in parallel relations
-
-def casual_not_parallel(casual_relations, parallel_relations):
-    return casual_relations - parallel_relations
-
-
-def generate_place(t1, t2):
-    return t1 + '->' + t2
+            if item1 == item1_:
+                if (relation_matrix[item1][item1] == 'choice' and
+                    relation_matrix[item2][item2] == 'choice' and
+                    relation_matrix[item2_][item2_] == 'choice' and
+                    relation_matrix[item2][item2_] == 'choice'):
+                    if ((item1, (item2_, item2)) not in possible_multiple_pairs):
+                        possible_multiple_pairs.append((item1, (item2, item2_)))
+                    
+            if item2 == item2_:
+                if(relation_matrix[item2][item2] == 'choice' and
+                   relation_matrix[item1][item1] == 'choice' and
+                   relation_matrix[item1_][item1_] == 'choice' and
+                   relation_matrix[item1][item1_] == 'choice'):
+                    if (((item1_, item1), item2) not in possible_multiple_pairs):
+                        possible_multiple_pairs.append(((item1, item1_), item2))
     
-
-logs = read_from_file('extension-log-3.xes')
-d_graph =dependency_graph(logs)
-mined_model = alpha(logs)
-print("\n")
-print ("Step 1: Unique tasks :" , generate_unique_set(logs))
-print("\n")
-print ("Step 2: First occuring transitions :" , generate_first_occuring_transitions(logs))
-print("\n")
-print ("Step 3: Last occuring transitions :" , generate_last_occuring_transitions(logs))
-print("\n")
-
-print ("Step 4.1: Dependency Graph :" , dependency_graph(logs))
-print("\n")
-
-print ("Step 4.2: Casual Relations :" , get_causal_relations(d_graph))
-#
-
-print("\n")
-print ("Step 4.3: Parallel Relations :" , get_parallel_relations(d_graph))
-
-
-
-print("\n")
-print("\n")
-print("\n")
-print("\n")
-print("\n")
-print("\n")
-print("Alpha", mined_model.places)
-
-
-def check_enabled(pn):
-    ts = ["record issue", "inspection", "intervention authorization", "action not required", "work mandate", "no concession", "work completion", "issue completion"]
-    for t in ts:
-        print (pn.is_enabled(pn.transition_name_to_id(t)))
-    print("")
+    # At this point we have all possible multiple pairs
+    # Lets remove the redundant pairs
+    copy = set(possible_multiple_pairs.copy())
+        
+    for item1, item2 in possible_multiple_pairs:
+        for item1_, item2_ in possible_multiple_pairs:
+            if item1 == item1_ and item2 == item2_:
+                continue
+                
+            if item2 == item2_: 
+                    # Both not being tuple
+                if not isinstance(item1, tuple) and not isinstance(item1_, tuple):
+                    if not (item1, item2) in copy or not (item1_, item2_) in copy: continue
+                    copy.remove((item1, item2))
+                    copy.remove((item1_, item2_))
+                    copy.add(((item1, item1_), item2))
+                    
+                    # Both being tuple
+                elif isinstance(item1, tuple) and isinstance(item1_, tuple):
+                    if not (item1, item2) in copy or not (item1_, item2_) in copy: continue
+                    copy.remove((item1_, item2_))
+                    tempSet = set()
+                        
+                    for i in item1:
+                        tempSet.add(i)
+                    for i in item1_:
+                        tempSet.add(i)
+                    tempList = list(tempSet)
+                    
+                    copy.add((tuple(tempList), item2))
+                        
+                elif isinstance(item1, tuple) and not isinstance(item1_, tuple):
+                    if not (item1, item2) in copy or not (item1_, item2_) in copy: continue
+                    copy.remove((item1, item2))
+                    copy.remove((item1_, item2_))
+                    tempSet = set()
+                        
+                    for i in item1:
+                        tempSet.add(i)
+                    tempSet.add(item1_)
+                    tempList = list(tempSet)
+                    copy.add((tuple(tempList), item2))
+                        
+                elif not isinstance(item1, tuple) and isinstance(item1_, tuple):
+                    if not (item1, item2) in copy or not (item1_, item2_) in copy: continue
+                    copy.remove((item1, item2))
+                    copy.remove((item1_, item2_))
+                    tempSet = set()
+                        
+                    for i in item1_:
+                        tempSet.add(i)
+                    tempSet.add(item1)
+                    tempList = list(tempSet)
+                    copy.add((tuple(tempList), item2))
     
-trace = ["record issue", "inspection", "intervention authorization", "work mandate", "work completion", "issue completion"]
-for a in trace:
-    check_enabled(mined_model)
-    mined_model.fire_transition(mined_model.transition_name_to_id(a))
+    
+    resultCopy = set(result.copy())
+    
+    for item1, item2 in result:
+        for item1_, item2_ in copy:
+            if item1 == item1_ and item2 == item2_:
+                continue
+            if item1 == item1_ or item2 == item2_:
+                if (item1, item2) not in resultCopy: continue
+                resultCopy.remove((item1, item2))
+                resultCopy.add((item1_, item2_))
 
-    
-    
-    
+            
 
+    return resultCopy
