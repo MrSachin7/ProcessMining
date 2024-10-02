@@ -39,7 +39,7 @@ def dependency_graph_inline(log_dict, transition_name='task'):
             if next_task not in df[task]:
                 df[task][next_task] = 1
             else:
-                df[task][next_task] = df[task][next_task] + 1
+                df[task][next_task] += 1 # increment the count of the next task
     return df
 
 
@@ -50,7 +50,7 @@ def read_from_file(filename):
     tree = ET.parse(filename)
     root = tree.getroot()
     
-    ns = {'xes': 'http://www.xes-standard.org/'}  # Update based on the file if needed
+    ns = {'xes': 'http://www.xes-standard.org/'} 
     
     # Loop through each trace (representing a case) in the XES file
     for trace in root.findall('xes:trace', ns):
