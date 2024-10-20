@@ -1,11 +1,15 @@
 import xml.etree.ElementTree as ET
 from datetime import datetime, date
 from collections import defaultdict
+from json import *
 
 class PetriNet():
     def __init__(self):
         self.places = {} # place_id -> no_of_tokens
         self.transitions = {} # transition_id -> {name, input, output}
+        self.missing = 0
+        self.consumed = 0 #Placeholder for the end place
+        self.produced = 0 
         
     def add_place(self, place):
         if not place in self.places:
@@ -37,22 +41,43 @@ class PetriNet():
     def is_enabled(self, transition):
         for place in self.transitions[transition]['input']:
             # if any input place has 0 tokens, return False
-            if self.places[place] == 0:
+            if self.get_tokens(place) == 0:
                 return False
         return True
     
     def add_marking(self, place):
         self.places[place] += 1
+        self.produced += 1
+
+    def remove_marking(self, place):
+        self.places[place] -= 1
+        self.consumed += 1
         
-    def fire_transition(self, transition):
-        if not self.is_enabled(transition):
+    def fire_transition(self, transition, forced = False):
+        if transition not in self.transitions:
+            raise ValueError(f"Transition {transition} does not exist.")
+        
+        if not forced and not self.is_enabled(transition):
             print(f"Transition {transition} is not enabled and cannot fire.")
             return
+        
+        # If the transition is forced
+        if forced and not self.is_enabled(transition):
+            for place in self.transitions[transition]['input']:
+                if self.get_tokens(place) == 0:
+                    # Add a token to the place and update the missing token
+                    self.places[place] = 1
+                    self.missing += 1
+            # Here, we guarentee that the transition is enabled
+            self.fire_transition(transition, forced=False)
+
         # subtract tokens from input places and add tokens to output places
         for place in self.transitions[transition]['input']:
-            self.places[place] -= 1
+            self.remove_marking(place)
+            # self.consumed += 1
         for place in self.transitions[transition]['output']:
-            self.places[place] += 1 
+            self.add_marking(place)
+            # self.produced += 1
             
     def to_dict(self):
         #Convert the object into a dictionary for serialization
@@ -60,7 +85,24 @@ class PetriNet():
             "places": self.places,
             "transitions": self.transitions
         }
+    
+    def get_current_number_of_tokens(self):
+        # End place is not included in the sum
+        sum = 0
+        for place in self.places:
+            if place != 'end':
+                sum += self.places[place] 
 
+        return sum
+    
+    def reset(self):
+        self.missing = 0
+        self.consumed = 0
+        self.remaining = 0
+        self.produced = 0
+        for place in self.places:
+            self.places[place] = 0
+        self.add_marking('start')
 
 def read_from_file(filename):
     log_data = {}
@@ -387,3 +429,65 @@ def get_casual_pairs(relation_matrix):
             
 
     return resultCopy
+
+"""
+Returns a list of unique traces in the log, along with the number of times each trace occurs.
+The last element of each trace is the count of the number of times the trace occurs in the log.
+"""
+def all_traces_with_counts(data):
+    trace_counts = defaultdict(int)
+    
+    # Iterate over each case in the dataset
+    for _, events in data.items():
+        trace = tuple(event['concept:name'] for event in events)
+        trace_counts[trace] += 1
+
+    # Convert the trace dictionary to a list of traces with counts
+    result = [list(trace) + [count] for trace, count in trace_counts.items()]
+    
+    return result
+
+
+
+def fitness_token_replay(log, model):
+    traces = all_traces_with_counts(log)
+    sumNiMi = 0
+    sumNiCi = 0
+    sumNiRi = 0
+    sumNiPi = 0
+    for trace in traces:
+        Ni = trace[-1]
+        trace = trace[:-1]
+        (Ci, Pi, Mi, Ri)= fire_transition_in_trace(trace, model)
+        sumNiMi += Ni * Mi
+        sumNiCi += Ni * Ci
+        sumNiRi += Ni * Ri
+        sumNiPi += Ni * Pi
+
+        print(", ".join(trace))
+        print(f"Consumed: {Ci}, Produced: {Pi}, Missing: {Mi}, Remaining: {Ri}")
+
+        print("\n\n")
+        # For the next trace, reset the model
+        model.reset()
+
+
+    f = 0.5 * (1 - (sumNiMi / sumNiCi)) + 0.5 * (1 - (sumNiRi / sumNiPi))
+    return f
+
+
+
+
+def fire_transition_in_trace(trace, model):
+    for transition in trace:
+        model.fire_transition(transition, forced=False)
+    return (model.consumed, model.produced, model.missing, model.get_current_number_of_tokens())
+
+model = alpha(read_from_file("extension-log-4.xes"))
+print(dumps(model.to_dict(), indent=4))
+
+
+
+
+
+
