@@ -371,6 +371,29 @@ def get_casual_pairs(relation_matrix):
                     tempSet.add(item1)
                     tempList = list(tempSet)
                     copy.add((tuple(tempList), item2))
+
+    copiedCopy = set(copy.copy())
+
+    for item1, item2 in copy:
+        for item1_, item2_ in copy:
+            if item1 == item1_ and item2 == item2_:
+                continue
+            if item1 == item1_:
+                if (len(item2) > len(item2_)):
+                    if (item1_, item2_) not in copiedCopy: continue
+                    copiedCopy.remove((item1_, item2_))
+                else:
+                    if (item1, item2) not in copiedCopy: continue
+                    copiedCopy.remove((item1, item2))
+            elif item2 == item2_:
+                if (len(item1) > len(item1_)):
+                    if (item1_, item2_) not in copiedCopy: continue
+                    copiedCopy.remove((item1_, item2_))
+                else:
+                    if (item1, item2) not in copiedCopy: continue
+                    copiedCopy.remove((item1, item2))
+
+    copy = copiedCopy
     
     
     resultCopy = set(result.copy())

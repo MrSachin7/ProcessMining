@@ -1,4 +1,4 @@
-from index import PetriNet,alpha,read_from_file
+from index import *
 from json import *
 
 # mined_model = alpha(read_from_file("extension-log-3.xes"))
@@ -16,4 +16,7 @@ from json import *
 #   mined_model.fire_transition(mined_model.transition_name_to_id(a))
 
 model = alpha(read_from_file("extension-log-3.xes"))
-print(dumps(model.to_dict(), indent=4))
+
+log = read_from_file("extension-log-3.xes")
+casual = get_casual_pairs(relation_matrix=relation_matrix(dependency_graph=dependency_graph(log)))
+print(dumps(list(casual), indent=4))

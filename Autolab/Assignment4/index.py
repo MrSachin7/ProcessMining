@@ -45,21 +45,23 @@ class PetriNet():
                 return False
         return True
     
-    def add_marking(self, place):
+    def add_marking(self, place, updateTokens = True):
         self.places[place] += 1
-        self.produced += 1
+        if updateTokens:
+            self.produced += 1
 
-    def remove_marking(self, place):
+    def remove_marking(self, place, updateTokens = True):
         self.places[place] -= 1
-        self.consumed += 1
+        if updateTokens:
+            self.consumed += 1
         
-    def fire_transition(self, transition, forced = False):
+    def fire_transition(self, transition, forced = False, updateTokens = True):
         if transition not in self.transitions:
             raise ValueError(f"Transition {transition} does not exist.")
         
         if not forced and not self.is_enabled(transition):
-            print(f"Transition {transition} is not enabled and cannot fire.")
-            return
+            raise ValueError(f"Transition {transition} is not enabled and cannot fire.")
+            
         
         # If the transition is forced
         if forced and not self.is_enabled(transition):
@@ -67,17 +69,31 @@ class PetriNet():
                 if self.get_tokens(place) == 0:
                     # Add a token to the place and update the missing token
                     self.places[place] = 1
-                    self.missing += 1
-            # Here, we guarentee that the transition is enabled
-            self.fire_transition(transition, forced=False)
+                    if updateTokens:
+                        self.missing += 1
+            
+            return self.fire_transition(transition)
 
         # subtract tokens from input places and add tokens to output places
         for place in self.transitions[transition]['input']:
-            self.remove_marking(place)
+            self.remove_marking(place, updateTokens=updateTokens)
             # self.consumed += 1
         for place in self.transitions[transition]['output']:
-            self.add_marking(place)
+            self.add_marking(place, updateTokens=updateTokens)
             # self.produced += 1
+    
+    def fire_next_transition(self):
+        next_transition = None
+        for place in self.places:
+            if self.get_tokens(place) == 1:
+                for transition in self.transitions:
+                    if place in self.transitions[transition]['input']:
+                        next_transition = transition
+                        break
+                if next_transition:
+                    break
+        self.fire_transition(next_transition, forced=True, updateTokens=False)
+
             
     def to_dict(self):
         #Convert the object into a dictionary for serialization
@@ -90,8 +106,7 @@ class PetriNet():
         # End place is not included in the sum
         sum = 0
         for place in self.places:
-            if place != 'end':
-                sum += self.places[place] 
+             sum += self.places[place] 
 
         return sum
     
@@ -413,6 +428,29 @@ def get_casual_pairs(relation_matrix):
                     tempSet.add(item1)
                     tempList = list(tempSet)
                     copy.add((tuple(tempList), item2))
+
+    copiedCopy = set(copy.copy())
+
+    for item1, item2 in copy:
+        for item1_, item2_ in copy:
+            if item1 == item1_ and item2 == item2_:
+                continue
+            if item1 == item1_:
+                if (len(item2) > len(item2_)):
+                    if (item1_, item2_) not in copiedCopy: continue
+                    copiedCopy.remove((item1_, item2_))
+                else:
+                    if (item1, item2) not in copiedCopy: continue
+                    copiedCopy.remove((item1, item2))
+            elif item2 == item2_:
+                if (len(item1) > len(item1_)):
+                    if (item1_, item2_) not in copiedCopy: continue
+                    copiedCopy.remove((item1_, item2_))
+                else:
+                    if (item1, item2) not in copiedCopy: continue
+                    copiedCopy.remove((item1, item2))
+
+    copy = copiedCopy
     
     
     resultCopy = set(result.copy())
@@ -464,10 +502,10 @@ def fitness_token_replay(log, model):
         sumNiRi += Ni * Ri
         sumNiPi += Ni * Pi
 
-        print(", ".join(trace))
-        print(f"Consumed: {Ci}, Produced: {Pi}, Missing: {Mi}, Remaining: {Ri}")
+        # print(", ".join(trace))
+        # print(f"Consumed: {Ci}, Produced: {Pi}, Missing: {Mi}, Remaining: {Ri}")
 
-        print("\n\n")
+        # print("\n\n")
         # For the next trace, reset the model
         model.reset()
 
@@ -478,13 +516,19 @@ def fitness_token_replay(log, model):
 
 
 
-def fire_transition_in_trace(trace, model):
+def fire_transition_in_trace(trace, model:PetriNet):
     for transition in trace:
-        model.fire_transition(transition, forced=False)
-    return (model.consumed, model.produced, model.missing, model.get_current_number_of_tokens())
+        model.fire_transition(transition, forced=True)
+    
+    if model.places['end'] == 0:
+        model.missing += 1
+        while model.places['end'] == 0:
+        # Model is not finished yet
+            model.fire_next_transition()
+    
 
-model = alpha(read_from_file("extension-log-4.xes"))
-print(dumps(model.to_dict(), indent=4))
+    model.remove_marking('end')
+    return (model.consumed, model.produced, model.missing, model.missing)
 
 
 
