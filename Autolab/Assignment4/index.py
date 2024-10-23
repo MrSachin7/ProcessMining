@@ -83,16 +83,18 @@ class PetriNet():
             # self.produced += 1
     
     def fire_next_transition(self):
-        next_transition = None
+        next_transition = self.get_next_unfired_transition()
+        self.fire_transition(next_transition, forced=True, updateTokens=False)
+    
+    def get_next_unfired_transition(self):
         for place in self.places:
             if self.get_tokens(place) == 1:
                 for transition in self.transitions:
                     if place in self.transitions[transition]['input']:
-                        next_transition = transition
-                        break
-                if next_transition:
-                    break
-        self.fire_transition(next_transition, forced=True, updateTokens=False)
+                        return transition
+    
+    def get_input_places(self, transition):
+        return self.transitions[transition]['input']
 
             
     def to_dict(self):
@@ -104,11 +106,7 @@ class PetriNet():
     
     def get_current_number_of_tokens(self):
         # End place is not included in the sum
-        sum = 0
-        for place in self.places:
-             sum += self.places[place] 
-
-        return sum
+        return self.produced - self.consumed + self.missing
     
     def reset(self):
         self.missing = 0
@@ -451,8 +449,6 @@ def get_casual_pairs(relation_matrix):
                     copiedCopy.remove((item1, item2))
 
     copy = copiedCopy
-    
-    
     resultCopy = set(result.copy())
     
     for item1, item2 in result:
@@ -502,10 +498,10 @@ def fitness_token_replay(log, model):
         sumNiRi += Ni * Ri
         sumNiPi += Ni * Pi
 
-        # print(", ".join(trace))
-        # print(f"Consumed: {Ci}, Produced: {Pi}, Missing: {Mi}, Remaining: {Ri}")
+        print(", ".join(trace))
+        print(f"Consumed: {Ci}, Produced: {Pi}, Missing: {Mi}, Remaining: {Ri}")
 
-        # print("\n\n")
+        print("\n\n")
         # For the next trace, reset the model
         model.reset()
 
@@ -521,17 +517,13 @@ def fire_transition_in_trace(trace, model:PetriNet):
         model.fire_transition(transition, forced=True)
     
     if model.places['end'] == 0:
+        print("Adding extraaaa")
         model.missing += 1
+    
         while model.places['end'] == 0:
         # Model is not finished yet
             model.fire_next_transition()
     
 
     model.remove_marking('end')
-    return (model.consumed, model.produced, model.missing, model.missing)
-
-
-
-
-
-
+    return (model.consumed, model.produced, model.missing, model.get_current_number_of_tokens())
